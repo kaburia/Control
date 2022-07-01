@@ -1,8 +1,3 @@
-# Control
-
-Raspberry Pi controlling DC Motor using L298N as the motor drive 
-
-
 ### Self Balancing Robot 
 
 1. TB6612FNG Motor Driver
