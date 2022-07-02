@@ -1,7 +1,7 @@
 #include <Wire.h>
 #include <MPU6050.h>
-
-MPU6050 mpu;
+#include "I2Cdev.h"
+#include "math.h"
 
 // TB6612FNG MOTOR DRIVER
 // M1
@@ -46,10 +46,25 @@ int motorPwm1 = 255;
 int motorPwm2 = 250;
 
 
+// Initializing the MPU-6050
+MPU6050 mpu;
+
+int16_t accy, accz, gyroX;
+float accAngle;
+unsigned long currentTime, previousTime=0, loopTime;
+int gyrox, gyroRate;
+float gyroAngle = 0;
 
 
-void setup()
-{
+volatile int motorPower, gyroRate;
+volatile float accAngle, gyroAngle, currentAngle, prevAngle=0, error, prevError=0, errorSum=0;
+volatile byte count=0;
+int distanceCm;
+
+
+
+// Setting up the motor
+void startMotor(){
   // Motor setup
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -58,12 +73,8 @@ void setup()
   pinMode(PWMA, OUTPUT);
   pinMode(PWMB, OUTPUT);
   pinMode(STBY, OUTPUT);
-  
 
-  // Setup Serial Monitor
-  Serial.begin(9600); 
-  
-  // Set encoder as input with internal pullup  
+   // Set encoder as input with internal pullup  
   pinMode(ENC_IN, INPUT_PULLUP); // M1
   pinMode(ENC_IN2, INPUT_PULLUP); // M2
 
@@ -73,8 +84,20 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(ENC_IN), updateEncoder1, RISING); // Motor 1
   attachInterrupt(digitalPinToInterrupt(ENC_IN2), updateEncoder2, RISING); // Motor 2
   
+
+}
+
+void setup()
+{
+  
+  // Setup Serial Monitor
+  Serial.begin(9600); 
+  
   // Setup initial values for timer
   previousMillis = millis();
+
+  // Starting the motor
+  startMotor();
 
   Serial.println("Initialize MPU6050");
 
@@ -90,7 +113,6 @@ void setup()
   // mpu.setAccelOffsetZ();
   
   checkSettings();
-
 
 
 }
@@ -229,19 +251,9 @@ void updateEncoder2()
 
 /*
 
-#include "Wire.h"
-#include "I2Cdev.h"
-#include "MPU6050.h"
-#include "math.h"
 
 
-MPU6050 mpu;
 
-int accy, accz;
-float accAngle;
-unsigned long currentTime, previousTime=0, loopTime;
-int gyrox, gyroRate;
-float gyroAngle = 0;
 
 
 void setup(){
