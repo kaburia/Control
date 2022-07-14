@@ -70,6 +70,23 @@ volatile byte count=0;
 int distanceCm;
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
+//////////////////////////////////////////////////////////////
+//////////////////////pulse calculation/////////////////////////
+/////////////////////////////////////////////////////////////////
+int lz = 0;
+int rz = 0;
+int rpluse = 0;
+int lpluse = 0;
+int pulseright,pulseleft;
+////////////////////////////////PI variable parameters//////////////////////////
+float speeds_filterold=0;
+float positions=0;
+int flag1;
+double PI_pwm;
+int cc;
+int speedout;
+float speeds_filter;
+
 
 ////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////KALMAN FILTER//////////////////////////
@@ -81,10 +98,7 @@ int16_t ax, ay, az, gx, gy, gz;
  
 // The tilt angle
 float Angle;
- 
-// Angular velocity along each axis as measured by the gyroscope
-// The units are degrees per second.
-float Gyro_x,Gyro_y,Gyro_z;  
+
  
 ///////////////////////Kalman_Filter////////////////////////////
 // Covariance of gyroscope noise
@@ -111,16 +125,32 @@ float q_bias;
  
 float accelz = 0;
 float angle;
+float angleY_one;
 float angle_speed;
  
 float Pdot[4] = { 0, 0, 0, 0};
 float P[2][2] = {{ 1, 0 }, { 0, 1 }};
 float  PCt_0, PCt_1, E;
+//////////////////////Kalman_Filter/////////////////////////
 
-////////////////////////////////////////////////////////////////////////////////
+///////////////////////angle parameters//////////////////////////////
+float angle_X; //Calculate the tilt angle variable about the X axis from the acceleration
+float angle_Y; //Calculate the tilt angle variable about the Y axis from the acceleration
+float angle0 = 1; //Actual measured angle (ideally 0 degrees)
+float Gyro_x,Gyro_y,Gyro_z;  //Angular angular velocity by gyroscope calculation
+///////////////////////angle parameters//////////////////////////////
 
+//////////////////////////////////////////////////////////////////
+//////////////////////PID parameters///////////////////////////////
+/////////////////////////////////////////////////////////////////
 
+double kp = 34, ki = 0, kd = 0.62;                   //angle loop parameters
+double kp_speed = 3.6, ki_speed = 0.080, kd_speed = 0;   // speed loop parameters
+double setp0 = 0; //angle balance point
+int PD_pwm;  //angle output
+float pwm1=0,pwm2=0;
 
+////////////////////////////////////////////////////////////////////////
 
 
 // Setting up the motor
@@ -141,8 +171,8 @@ void startMotor(){
 
   
   // Attach interrupt 
-  attachInterrupt(digitalPinToInterrupt(ENC_IN), updateEncoder1, RISING); // Motor 1
-  attachInterrupt(digitalPinToInterrupt(ENC_IN2), updateEncoder2, RISING); // Motor 2
+  attachInterrupt(digitalPinToInterrupt(ENC_IN), updateEncoder1, RISING); // Motor 1 //// Check between change and rising
+  attachInterrupt(digitalPinToInterrupt(ENC_IN2), updateEncoder2, RISING); // Motor 2 /// Check between change and rising
   
 
 }
@@ -371,66 +401,145 @@ void loop()
 /////////////////////////////angle calculate///////////////////////
 void angle_calculate(int16_t ax,int16_t ay,int16_t az,int16_t gx,int16_t gy,int16_t gz,float dt,float Q_angle,float Q_gyro,float R_angle,float C_0,float K1)
 {
-  // Radial rotation angle calculation formula; negative sign is direction processing
-  Angle = -atan2(ay , az) * (180/ PI); 
+  float Angle = -atan2(ay , az) * (180/ PI);           //Radial rotation angle calculation formula; negative sign is direction processing
+  Gyro_x = -gx / 131;              //The X-axis angular velocity calculated by the gyroscope; the negative sign is the direction processing
+  Kalman_Filter(Angle, Gyro_x);            //Kalman Filtering
+  //Rotation angle Z-axis parameter
+  Gyro_z = -gz / 131;                      //Z-axis angular velocity
+  //accelz = az / 16.4;
  
-  // The X-axis angular velocity calculated by the gyroscope; the negative sign is the direction processing
-  Gyro_x = -gx / 131;      
- 
-  // KalmanFilter 
-  Kalman_Filter(Angle, Gyro_x);            
+  float angleAx = -atan2(ax, az) * (180 / PI); //Calculate the angle with the x-axis
+  Gyro_y = -gy / 131.00; //Y-axis angular velocity
+  Yiorderfilter(angleAx, Gyro_y); //first-order filtering
 }
 ////////////////////////////////////////////////////////////////
  
 ///////////////////////////////KalmanFilter/////////////////////
 void Kalman_Filter(double angle_m, double gyro_m)
 {
-  // Prior estimate
-  angle += (gyro_m - q_bias) * dt;          
+  angle += (gyro_m - q_bias) * dt;          //Prior estimate
   angle_err = angle_m - angle;
- 
-  // Differential of azimuth error covariance
-  Pdot[0] = Q_angle - P[0][1] - P[1][0];    
+   
+  Pdot[0] = Q_angle - P[0][1] - P[1][0];    //Differential of azimuth error covariance
   Pdot[1] = - P[1][1];
   Pdot[2] = - P[1][1];
   Pdot[3] = Q_gyro;
- 
-  // The integral of the covariance differential of the prior estimate error
-  P[0][0] += Pdot[0] * dt;    
+   
+  P[0][0] += Pdot[0] * dt;    //A priori estimation error covariance differential integral
   P[0][1] += Pdot[1] * dt;
   P[1][0] += Pdot[2] * dt;
   P[1][1] += Pdot[3] * dt;
    
-  // Intermediate variable of matrix multiplication
+  //Intermediate variable of matrix multiplication 
   PCt_0 = C_0 * P[0][0];
   PCt_1 = C_0 * P[1][0];
-   
-  // Denominator
+  //Denominator
   E = R_angle + C_0 * PCt_0;
-   
-  // Gain value
+  //gain value
   K_0 = PCt_0 / E;
   K_1 = PCt_1 / E;
- 
-  // Intermediate variable of matrix multiplication
-  t_0 = PCt_0;  
+   
+  t_0 = PCt_0;  //Intermediate variable of matrix multiplication
   t_1 = C_0 * P[0][1];
- 
-  // Posterior estimation error covariance
-  P[0][0] -= K_0 * t_0;     
+   
+  P[0][0] -= K_0 * t_0;    //Posterior estimation error covariance
   P[0][1] -= K_0 * t_1;
   P[1][0] -= K_1 * t_0;
   P[1][1] -= K_1 * t_1;
- 
-  // Posterior estimation
-  q_bias += K_1 * angle_err;    
- 
-  // The differential value of the output value; work out the optimal angular velocity
-  angle_speed = gyro_m - q_bias;   
- 
-  ////Posterior estimation; work out the optimal angle
-  angle += K_0 * angle_err; 
+   
+  q_bias += K_1 * angle_err;    //Posterior estimate 
+  angle_speed = gyro_m - q_bias;   //The differential of the output value gives the optimal angular velocity
+  angle += K_0 * angle_err; ////Posterior estimation to get the optimal angle
 }
+
+
+/////////////////////first-order filtering/////////////////
+void Yiorderfilter(float angle_m, float gyro_m)
+{
+  angleY_one = K1 * angle_m + (1 - K1) * (angleY_one + gyro_m * dt);
+}
+ 
+//////////////////angle PD////////////////////
+void PD()
+{
+  PD_pwm = kp * (angle + angle0) + kd * angle_speed; //PD angle loop control
+}
+
+
+/////////////////speed PI////////////////////
+void speedpiout()
+{
+  float speeds = (pulseleft + pulseright) * 1.0;      //Vehicle speed  pulse value
+  pulseright = pulseleft = 0;      //Clear
+  speeds_filterold *= 0.7;         //first-order complementary filtering
+  speeds_filter = speeds_filterold + speeds * 0.3;
+  speeds_filterold = speeds_filter;
+  positions += speeds_filter;
+  positions = constrain(positions, -3550,3550);    //Anti-integral saturation
+  PI_pwm = ki_speed * (setp0 - positions) + kp_speed * (setp0 - speeds_filter);      //speed loop control PI
+}
+//////////////////speed PI////////////////////
+ 
+ 
+////////////////////////////PWM end value/////////////////////////////
+void anglePWM()
+{
+  pwm2=-PD_pwm - PI_pwm ;           //assign the final value of PWM to motor 
+  pwm1=-PD_pwm - PI_pwm ;
+   
+  if(pwm1>255)             //limit PWM value not greater than 255
+  {
+    pwm1=255;
+  }
+  if(pwm1<-255) 
+  {
+    pwm1=-255;
+  }
+  if(pwm2>255)
+  {
+    pwm2=255;
+  }
+  if(pwm2<-255)
+  {
+    pwm2=-255;
+  }
+ 
+  // When the self-balancing trolley’s tilt angle gets less than a certain angle, 
+  // the motor will stop.
+   
+  if(angle>25 || angle<-25)      
+  {
+    pwm1=pwm2=0;
+  }
+ 
+  // Determine the motor’s steering and speed by the positive and negative of PWM 
+  if(pwm2>=0)         
+  {
+    digitalWrite(IN1,LOW);
+    digitalWrite(IN2,HIGH);
+    analogWrite(PWMA,pwm2);
+  }
+  else
+  {
+    digitalWrite(IN1,HIGH);
+    digitalWrite(IN2,LOW);
+    analogWrite(PWMA,-pwm2);
+  }
+ 
+  if(pwm1>=0)
+  {
+    digitalWrite(IN3,HIGH);
+    digitalWrite(IN4,LOW);
+    analogWrite(PWMB,pwm1);
+  }
+  else
+  {
+    digitalWrite(IN3,LOW);
+    digitalWrite(IN4,HIGH);
+    analogWrite(PWMB,-pwm1);
+  }
+}
+
 
 void updateEncoder1()
 {
@@ -444,186 +553,59 @@ void updateEncoder2()
   encoderValue2++;
 }
 
-
-
-/*
-ISR(TIMER1_COMPA_vect)
+////////////////////pulse calculation///////////////////////
+void countpluse()
 {
-  // calculate the angle of inclination
-  accAngle = atan2(accy, accz)*RAD_TO_DEG;
-  gyroRate = map(gyroX, -32768, 32767, -250, 250);
-  gyroAngle = (float)gyroRate*sampleTime;  
-  currentAngle = 0.9934*(prevAngle + gyroAngle) + 0.0066*(accAngle);
-  
-  error = currentAngle - targetAngle;
-  errorSum = errorSum + error;  
-  errorSum = constrain(errorSum, -300, 300);
-  //calculate output from P, I and D values
-  motorPower = Kp*(error) + Ki*(errorSum)*sampleTime - Kd*(currentAngle-prevAngle)/sampleTime;
-  prevAngle = currentAngle;
-  // toggle the led on pin13 every second
-  count++;
-  if(count == 200)  {
-    count = 0;
-    digitalWrite(13, !digitalRead(13));
+  lz = encoderValue1;     //Assign the value counted by the code wheel to lz
+  rz = encoderValue2;
+ 
+  encoderValue1 = 0;     //Clear the code counter count
+  encoderValue2 = 0;
+ 
+  lpluse = lz;
+  rpluse = rz;
+ 
+  if ((pwm1 < 0) && (pwm2 < 0))                     //judge the moving direction; if backwards（PWM, namely motor voltage is negative）, pulse number is a negative number
+  {
+    rpluse = -rpluse;
+    lpluse = -lpluse;
+  }
+  else if ((pwm1 > 0) && (pwm2 > 0))                 // if backwards（PWM, namely motor voltage is positive）, pulse number is a positive number
+  {
+    rpluse = rpluse;
+    lpluse = lpluse;
+  }
+  else if ((pwm1 < 0) && (pwm2 > 0))                 //Judge turning direction of the car;  turn left; Right pulse number is a positive number; Left pulse number is a negative number.
+  {
+    rpluse = rpluse;
+    lpluse = -lpluse;
+  }
+  else if ((pwm1 > 0) && (pwm2 < 0))               //Judge turning direction of the car;  turn right; Right pulse number is a negative number; Left pulse number is a positive number.
+  {
+    rpluse = -rpluse;
+    lpluse = lpluse;
+  }
+ 
+  //enter interrupts per 5ms; pulse number superposes
+  pulseright += rpluse;
+  pulseleft += lpluse;
+}
+ 
+/////////////////////////////////interrupts////////////////////////////
+void Interrupt_Service_Routine()
+{
+  sei();  //Allow global interrupts
+  countpluse();        //Pulse superposition subfunction
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);     //IIC to get MPU6050 six-axis data  ax ay az gx gy gz
+  angle_calculate(ax, ay, az, gx, gy, gz, dt, Q_angle, Q_gyro, R_angle, C_0, K1);      //get angle and Kalman filtering
+  PD();         //angle loop PD control
+  anglePWM();
+ 
+  cc++;
+  if(cc>=8)     //5*8=40，40ms entering once speed PI algorithm  
+  {
+    speedpiout();   
+    cc=0;  //Clear
   }
 }
-*/
-
-
-/*
-
-
-
-
-
-
-void setup(){
-  mpu.initialize();
-  Serial.begin(115200);
-}
-
-void loop(){
-
-  // Getting the angle
-  accy = mpu.getAccelerationZ();
-  accz = mpu.getAccelerationY();
-  
-  accAngle = atan2(accy, accz); *RAD_TO_DEG
-
-  if (isnan(accAngle));
-  else
-    Serial.println(accAngle);
-
-  // Getting the rate of change in the angle
-  // Time
-  currentTime = millis();
-  loopTime = currentTime - previousTime;
-  previousTime = currentTime;
-
-  gyrox = mpu.getRotationX();
-  gyroRate = map(gyrox, -32768,32767, -250,250);
-  gyroAngle = gyroAngle + (float)gyroRate *loopTime/1000;
-
-  Serial.println(gyroAngle);
-
-
-  // Complementary Filters
-  // Accelerometer affected by sudden Horizontal Movements
-  // Gyroscope drifts away from actual value 
-  
-  // currentAngle = 0.9934 * (previousAngle + gyroAngle) + 0.0066 * (accAngle)
-
-
-
-}
-
-*/
-
-/*
-
-#include "Wire.h"
-#include "I2Cdev.h"
-#include "MPU6050.h"
-#include "math.h"
-#include <NewPing.h>
-
-#define leftMotorPWMPin   6
-#define leftMotorDirPin   7
-#define rightMotorPWMPin  5
-#define rightMotorDirPin  4
-
-#define TRIGGER_PIN 9
-#define ECHO_PIN 8
-#define MAX_DISTANCE 75
-
-#define Kp  40
-#define Kd  0.05
-#define Ki  40
-#define sampleTime  0.005
-#define targetAngle -2.5
-
-MPU6050 mpu;
-NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
-
-int16_t accY, accZ, gyroX;
-volatile int motorPower, gyroRate;
-volatile float accAngle, gyroAngle, currentAngle, prevAngle=0, error, prevError=0, errorSum=0;
-volatile byte count=0;
-int distanceCm;
-
-void setMotors(int leftMotorSpeed, int rightMotorSpeed) {
-  if(leftMotorSpeed >= 0) {
-    analogWrite(leftMotorPWMPin, leftMotorSpeed);
-    digitalWrite(leftMotorDirPin, LOW);
-  }
-  else {
-    analogWrite(leftMotorPWMPin, 255 + leftMotorSpeed);
-    digitalWrite(leftMotorDirPin, HIGH);
-  }
-  if(rightMotorSpeed >= 0) {
-    analogWrite(rightMotorPWMPin, rightMotorSpeed);
-    digitalWrite(rightMotorDirPin, LOW);
-  }
-  else {
-    analogWrite(rightMotorPWMPin, 255 + rightMotorSpeed);
-    digitalWrite(rightMotorDirPin, HIGH);
-  }
-}
-
-void init_PID() {  
-  // initialize Timer1
-  cli();          // disable global interrupts
-  TCCR1A = 0;     // set entire TCCR1A register to 0
-  TCCR1B = 0;     // same for TCCR1B    
-  // set compare match register to set sample time 5ms
-  OCR1A = 9999;    
-  // turn on CTC mode
-  TCCR1B |= (1 << WGM12);
-  // Set CS11 bit for prescaling by 8
-  TCCR1B |= (1 << CS11);
-  // enable timer compare interrupt
-  TIMSK1 |= (1 << OCIE1A);
-  sei();          // enable global interrupts
-}
-
-void setup() {
-  // set the motor control and PWM pins to output mode
-  pinMode(leftMotorPWMPin, OUTPUT);
-  pinMode(leftMotorDirPin, OUTPUT);
-  pinMode(rightMotorPWMPin, OUTPUT);
-  pinMode(rightMotorDirPin, OUTPUT);
-  // set the status LED to output mode 
-  pinMode(13, OUTPUT);
-  // initialize the MPU6050 and set offset values
-  mpu.initialize();
-  mpu.setYAccelOffset(1593);
-  mpu.setZAccelOffset(963);
-  mpu.setXGyroOffset(40);
-  // initialize PID sampling loop
-  init_PID();
-}
-
-void loop() {
-  // read acceleration and gyroscope values
-  accY = mpu.getAccelerationY();
-  accZ = mpu.getAccelerationZ();  
-  gyroX = mpu.getRotationX();
-  // set motor power after constraining it
-  motorPower = constrain(motorPower, -255, 255);
-  setMotors(motorPower, motorPower);
-  // measure distance every 100 milliseconds
-  if((count%20) == 0){
-    distanceCm = sonar.ping_cm();
-  }
-  if((distanceCm < 20) && (distanceCm != 0)) {
-    setMotors(-motorPower, motorPower);
-  }
-}
-// The ISR will be called every 5 milliseconds
-
-*/
-
-
-
-
+///////////////////////////////////////////////////////////
