@@ -8,7 +8,7 @@
 #define IN1 12
 #define IN2 11
 #define PWMA 10
-#define ENC_IN 3
+#define ENC_IN 4
 
 
 // M2
@@ -87,6 +87,30 @@ void startMotor(){
 
 }
 
+void startmpu(){
+    //Start MPU6050 communication
+  Wire.beginTransmission(MPU6050_ADDR);       //From the datastheet, the address is 0x68, but you can change that above.
+  Wire.write(0x6B);                           //Write on 0x6B register
+  Wire.write(0x00);                           //Set register to 00000000 and activate gyro
+  Wire.endTransmission();                     //End the i2c transmission
+  //Change gyro scale to +/-250deg/sec
+  Wire.beginTransmission(MPU6050_ADDR);       //My MPU6050 address is 0x68, change it at the begginning of the code
+  Wire.write(0x1B);                           //Write on 0x1B register
+  Wire.write(0x00);                           //Set scale to 250dps, full scale
+  Wire.endTransmission();                     //End the i2c transmission
+  //Change accelerometer scale to +/-4g.
+  Wire.beginTransmission(MPU6050_ADDR);       //My MPU6050 address is 0x68, change it at the begginning of the code
+  Wire.write(0x1C);                           //Write on 0x1C register
+  Wire.write(0x08);                           //Set scale to +/-4g
+  Wire.endTransmission();                     //End the i2c transmission
+  //Enable some filters
+  Wire.beginTransmission(MPU6050_ADDR);       //My MPU6050 address is 0x68, change it at the begginning of the code
+  Wire.write(0x1A);                           //Write on 0x1A register
+  Wire.write(0x03);                           //Set Digital Low Pass Filter to ~43Hz
+  Wire.endTransmission();                     //End the i2c transmission
+
+}
+
 void setup()
 {
   
@@ -101,12 +125,7 @@ void setup()
 
   Serial.println("Initialize MPU6050");
 
-  
-  // If you want, you can set accelerometer offsets
-  // mpu.setAccelOffsetX();
-  // mpu.setAccelOffsetY();
-  // mpu.setAccelOffsetZ();
-
+  startmpu();
 
 }
 
@@ -168,6 +187,8 @@ void loop()
     encoderValue2 = 0;
   }
   
+  Vector rawAccel = mpu.readRawAccel();
+  Vector normAccel = mpu.readNormalizeAccel();
 
   Serial.print(" Xraw = ");
   Serial.print(rawAccel.XAxis);
@@ -198,6 +219,28 @@ void updateEncoder2()
 {
   // Increment value for each pulse from encoder
   encoderValue2++;
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+  // calculate the angle of inclination
+  accAngle = atan2(accy, accz)*RAD_TO_DEG;
+  gyroRate = map(gyroX, -32768, 32767, -250, 250);
+  gyroAngle = (float)gyroRate*sampleTime;  
+  currentAngle = 0.9934*(prevAngle + gyroAngle) + 0.0066*(accAngle);
+  
+  error = currentAngle - targetAngle;
+  errorSum = errorSum + error;  
+  errorSum = constrain(errorSum, -300, 300);
+  //calculate output from P, I and D values
+  motorPower = Kp*(error) + Ki*(errorSum)*sampleTime - Kd*(currentAngle-prevAngle)/sampleTime;
+  prevAngle = currentAngle;
+  // toggle the led on pin13 every second
+  count++;
+  if(count == 200)  {
+    count = 0;
+    digitalWrite(13, !digitalRead(13));
+  }
 }
 
 
@@ -352,27 +395,7 @@ void loop() {
   }
 }
 // The ISR will be called every 5 milliseconds
-ISR(TIMER1_COMPA_vect)
-{
-  // calculate the angle of inclination
-  accAngle = atan2(accY, accZ)*RAD_TO_DEG;
-  gyroRate = map(gyroX, -32768, 32767, -250, 250);
-  gyroAngle = (float)gyroRate*sampleTime;  
-  currentAngle = 0.9934*(prevAngle + gyroAngle) + 0.0066*(accAngle);
-  
-  error = currentAngle - targetAngle;
-  errorSum = errorSum + error;  
-  errorSum = constrain(errorSum, -300, 300);
-  //calculate output from P, I and D values
-  motorPower = Kp*(error) + Ki*(errorSum)*sampleTime - Kd*(currentAngle-prevAngle)/sampleTime;
-  prevAngle = currentAngle;
-  // toggle the led on pin13 every second
-  count++;
-  if(count == 200)  {
-    count = 0;
-    digitalWrite(13, !digitalRead(13));
-  }
-}
+
 */
 
 
