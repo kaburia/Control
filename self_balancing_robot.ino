@@ -3,7 +3,10 @@
 #include "I2Cdev.h"
 #include "math.h"
 
-// TB6612FNG MOTOR DRIVER
+///////////////////////////////////////////////////////////////////////////////
+/////////////////////////////// TB6612FNG MOTOR DRIVER//////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 // M1
 #define IN1 12
 #define IN2 11
@@ -44,22 +47,79 @@ int rpm2 = 0; // M2
 // Variable for PWM motor speed output
 int motorPwm1 = 255;
 int motorPwm2 = 250;
+///////////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////// MPU-6050//////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////
 
 
 // Initializing the MPU-6050
 MPU6050 mpu;
 
-int16_t accy, accz, gyroX;
-float accAngle;
-unsigned long currentTime, previousTime=0, loopTime;
-int gyrox, gyroRate;
-float gyroAngle = 0;
+volatile long accelX, accelY, accelZ, gForceX, gForceY, gForceZ, gyroX, gyroY, gyroZ;
+float rotX, rotY, rotZ;
+
+
 
 
 volatile int motorPower, gyroRate;
 volatile float accAngle, gyroAngle, currentAngle, prevAngle=0, error, prevError=0, errorSum=0;
 volatile byte count=0;
 int distanceCm;
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////KALMAN FILTER//////////////////////////
+////////////////////////////////////////////////////////////////////////////
+
+
+//Define three-axis acceleration, three-axis gyroscope variables
+int16_t ax, ay, az, gx, gy, gz; 
+ 
+// The tilt angle
+float Angle;
+ 
+// Angular velocity along each axis as measured by the gyroscope
+// The units are degrees per second.
+float Gyro_x,Gyro_y,Gyro_z;  
+ 
+///////////////////////Kalman_Filter////////////////////////////
+// Covariance of gyroscope noise
+float Q_angle = 0.001;  
+ 
+// Covariance of gyroscope drift noise
+float Q_gyro = 0.003;  
+ 
+// Covariance of accelerometer
+float R_angle = 0.5;    
+char C_0 = 1;
+ 
+// The filter sampling time.
+float dt = 0.005;
+ 
+// a function containing the Kalman gain is used to 
+// calculate the deviation of the optimal estimate.
+float K1 = 0.05; 
+float K_0,K_1,t_0,t_1;
+float angle_err;
+ 
+// Gyroscope drift 
+float q_bias;    
+ 
+float accelz = 0;
+float angle;
+float angle_speed;
+ 
+float Pdot[4] = { 0, 0, 0, 0};
+float P[2][2] = {{ 1, 0 }, { 0, 1 }};
+float  PCt_0, PCt_1, E;
+
+////////////////////////////////////////////////////////////////////////////////
+
+
 
 
 
@@ -186,18 +246,9 @@ void printData() {
   Serial.print(gForceY);
   Serial.print(" Z=");
   Serial.println(gForceZ);
-   // I2C to get MPU6050 six-axis data  ax ay az gx gy gz
-  mpu6050.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+   
  
-  // Radial rotation angle calculation formula; 
-  // The negative sign indicates the direction.
-  // Convert radians to degrees.
-  Angle = -atan2(ay , az) * (180/ PI);     
- 
-  // The x-axis angular velocity calculated by the gyroscope; 
-  // The negative sign indicates the direction. The 131 value comes
-  // from the MPU6050 datasheet.
-  Gyro_x = -gx / 131;  
+  
  
   // Print the tilt angle in degrees
   Serial.print("Angle = ");
@@ -206,6 +257,39 @@ void printData() {
   // Print the angular velocity in degrees per second
   Serial.print("   Gyro_x = ");
   Serial.println(Gyro_x);
+
+
+  
+    // Only update display when there is a reading
+    if (motorPwm1 > 0 || rpm1 > 0) {
+      Serial.print("PWMA VALUE: ");
+      Serial.print(motorPwm1);
+      Serial.print('\t');
+      Serial.print(" PULSES: ");
+      Serial.print(encoderValue1);
+      Serial.print('\t');
+      Serial.print(" SPEEDA: ");
+      Serial.print(rpm1);
+      Serial.println(" RPM");
+      Serial.print("PWMB VALUE: ");
+      Serial.print(motorPwm2);
+      Serial.print('\t');
+      Serial.print(" PULSES: ");
+      Serial.print(encoderValue2);
+      Serial.print('\t');
+      Serial.print(" SPEED: ");
+      Serial.print(rpm2);
+      Serial.println(" RPMB");
+    }
+  // After applying Kalman Filter
+  Serial.print("Angle = ");
+  Serial.print(Angle);
+  Serial.print("  K_angle = ");
+  Serial.println(angle);
+  Serial.print("Gyro_x = ");
+  Serial.print(Gyro_x);
+  Serial.print("  K_Gyro_x = ");
+  Serial.println(angle_speed);
 }
 
 /*
@@ -213,7 +297,7 @@ void printData() {
 */
 
 
-// Calculating angle
+
 
 void setup()
 {
@@ -242,6 +326,8 @@ void setup()
 void loop()
 {
   printData();
+  recordAccelRegisters();
+  recordGyroRegisters();
     
     // Write PWM to controller
     analogWrite(PWMA, motorPwm1);
@@ -266,28 +352,12 @@ void loop()
     // Calculate RPM
     rpm1 = (float)(encoderValue1 * 60 / ENC_COUNT_REV);
     rpm2 = (float)(encoderValue2 * 60 / ENC_COUNT_REV);
+    // I2C to get MPU6050 six-axis ax ay az gx gy gz
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);     
+ 
+  // Obtain angle and Kalman Filter 
+  angle_calculate(ax, ay, az, gx, gy, gz, dt, Q_angle, Q_gyro, R_angle, C_0, K1);     
 
-    // Only update display when there is a reading
-    if (motorPwm1 > 0 || rpm1 > 0) {
-      Serial.print("PWMA VALUE: ");
-      Serial.print(motorPwm1);
-      Serial.print('\t');
-      Serial.print(" PULSES: ");
-      Serial.print(encoderValue1);
-      Serial.print('\t');
-      Serial.print(" SPEEDA: ");
-      Serial.print(rpm1);
-      Serial.println(" RPM");
-      Serial.print("PWMB VALUE: ");
-      Serial.print(motorPwm2);
-      Serial.print('\t');
-      Serial.print(" PULSES: ");
-      Serial.print(encoderValue2);
-      Serial.print('\t');
-      Serial.print(" SPEED: ");
-      Serial.print(rpm2);
-      Serial.println(" RPMB");
-    }
     
     encoderValue1 = 0;
     encoderValue2 = 0;
@@ -374,6 +444,9 @@ void updateEncoder2()
   encoderValue2++;
 }
 
+
+
+/*
 ISR(TIMER1_COMPA_vect)
 {
   // calculate the angle of inclination
@@ -395,7 +468,7 @@ ISR(TIMER1_COMPA_vect)
     digitalWrite(13, !digitalRead(13));
   }
 }
-
+*/
 
 
 /*
