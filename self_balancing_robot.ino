@@ -89,27 +89,98 @@ void startMotor(){
 
 void startmpu(){
     //Start MPU6050 communication
-  Wire.beginTransmission(MPU6050_ADDR);       //From the datastheet, the address is 0x68, but you can change that above.
+  Wire.beginTransmission(0x68);       //From the datastheet, the address is 0x68, but you can change that above.
   Wire.write(0x6B);                           //Write on 0x6B register
   Wire.write(0x00);                           //Set register to 00000000 and activate gyro
   Wire.endTransmission();                     //End the i2c transmission
   //Change gyro scale to +/-250deg/sec
-  Wire.beginTransmission(MPU6050_ADDR);       //My MPU6050 address is 0x68, change it at the begginning of the code
+  Wire.beginTransmission(0x68);       //My MPU6050 address is 0x68, change it at the begginning of the code
   Wire.write(0x1B);                           //Write on 0x1B register
   Wire.write(0x00);                           //Set scale to 250dps, full scale
   Wire.endTransmission();                     //End the i2c transmission
   //Change accelerometer scale to +/-4g.
-  Wire.beginTransmission(MPU6050_ADDR);       //My MPU6050 address is 0x68, change it at the begginning of the code
+  Wire.beginTransmission(0x68);       //My MPU6050 address is 0x68, change it at the begginning of the code
   Wire.write(0x1C);                           //Write on 0x1C register
-  Wire.write(0x08);                           //Set scale to +/-4g
-  Wire.endTransmission();                     //End the i2c transmission
-  //Enable some filters
-  Wire.beginTransmission(MPU6050_ADDR);       //My MPU6050 address is 0x68, change it at the begginning of the code
-  Wire.write(0x1A);                           //Write on 0x1A register
-  Wire.write(0x03);                           //Set Digital Low Pass Filter to ~43Hz
+  Wire.write(0b00000000);                           //Set scale to +/-4g
   Wire.endTransmission();                     //End the i2c transmission
 
+
+  //Enable some filters
+  /*When we start, the gyro might have an offset value. We make 520 readdings and get that calibration value
+  We use taht later in the code to substract the raw offset. 
+  for (int i = 0; i < 520; i++) {                               //Create 520 loops
+    if (i % 20 == 0){
+      digitalWrite(LED1, !digitalRead(LED1));                   //Blink the LED every 20 loops
+      digitalWrite(Buzzer, !digitalRead(Buzzer));               //Buzz every 20 loops
+    }
+    Wire.beginTransmission(MPU6050_ADDR);                       //Start i2c communication with MPU6050
+    Wire.write(0x43);                                           //We read from register 0x43
+    Wire.endTransmission();                                     //End the i2c transmission
+    Wire.requestFrom(MPU6050_ADDR, 4);                          //Request 2 bytes from the MPU6050
+    Gyro_Y_Offset += Wire.read() << 8 | Wire.read();            //Merge high and low byte and get an integer
+    Gyro_X_Offset += Wire.read() << 8 | Wire.read();            //Merge high and low byte and get an integer
+    delayMicroseconds(3500);                                    //Small delay
+  }
+  Gyro_X_Offset /= 520;                                         //Divide the total value by 520 to get the avarage gyro offset
+  Gyro_Y_Offset /= 520;                                         //Divide the total value by 520 to get the avarage gyro offset
+
+  delay(200);                                                   //Small Delay
+  pinMode(Enable, OUTPUT);                                      //Set Enable pin as OUTPUT
+  digitalWrite(Enable, LOW);                                    //Finally, we enable the stepper drivers (drivers are enabled with LOW)
+
+  //Set the Loop_Time variable at the next end loop time
+  Loop_Time = micros() + 4000;                                 //Loop time is 4000us
+*/
+
 }
+
+
+
+void recordAccelRegisters() {
+  // REGISTER 0x3B~0x40/REGISTER 59~64
+  Wire.beginTransmission(0b1101000); //I2C address of the MPU
+  Wire.write(0x3B); //Starting register for Accelerometer Readings (see datasheet)
+  Wire.endTransmission();
+  Wire.requestFrom(0b1101000,6); //Request Accel Registers (3B - 40)
+  
+  // Use left shift << and bit operations |  Wire.read() read once 1bytes，and automatically read the data of the next address on the next call.
+  while(Wire.available() < 6);  // Waiting for all the 6 bytes data to be sent from the slave machine （Must wait for all data to be stored in the buffer before reading） 
+  accelX = Wire.read()<<8|Wire.read(); //Store first two bytes into accelX （Automatically stored as a defined long value）
+  accelY = Wire.read()<<8|Wire.read(); //Store middle two bytes into accelY
+  accelZ = Wire.read()<<8|Wire.read(); //Store last two bytes into accelZ
+  processAccelData();
+}
+ 
+ // divide the raw values by 16384, according to the datasheet
+void processAccelData(){
+  gForceX = accelX / 16384.0;     //float = long / float
+  gForceY = accelY / 16384.0; 
+  gForceZ = accelZ / 16384.0;
+}
+  
+void recordGyroRegisters() {
+  // REGISTER 0x43~0x48/REGISTER 67~72
+  Wire.beginTransmission(0b1101000); //I2C address of the MPU
+  Wire.write(0x43); //Starting register for Gyro Readings
+  Wire.endTransmission();
+  Wire.requestFrom(0b1101000,6); //Request Gyro Registers (43 ~ 48)
+  while(Wire.available() < 6);
+  gyroX = Wire.read()<<8|Wire.read(); //Store first two bytes into accelX
+  gyroY = Wire.read()<<8|Wire.read(); //Store middle two bytes into accelY
+  gyroZ = Wire.read()<<8|Wire.read(); //Store last two bytes into accelZ
+  processGyroData();
+}
+ 
+// The 131.0 comes from the MPU6050 datasheet.
+void processGyroData() {
+  rotX = gyroX / 131.0;
+  rotY = gyroY / 131.0; 
+  rotZ = gyroZ / 131.0;
+}
+
+/*
+
+*/
 
 void setup()
 {
