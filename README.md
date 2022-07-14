@@ -16,8 +16,8 @@
 - With the help of the MPU-6050 to retrieve information from the gyroscope and accelerometer sensor
 - Gyroscope sensor is a device that can measure and maintain the orientation and angular velocity of an object. These are more advanced than accelerometers. These can measure the tilt and lateral orientation of the object whereas accelerometer can only measure the linear motion.
 
-- Calibration of the MPU-6050; Set the SBR balanced, Get the output of the x and y values for both the accelerometer and gyroscope readings.
-- Offset the MPU-6050 by the acquired readings repeat till the result is zero
+- Calibration of the MPU-6050; Set the SBR balanced, Get the output of the x and y values for both the accelerometer and gyroscope readings fromthe registers using the wire library(12C Communication protocol)
+- The angle can be calculated via the change rather than having to calibrate the gyroscope to zero
 
 #### PID CONTROL
 - 

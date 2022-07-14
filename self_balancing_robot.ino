@@ -109,10 +109,7 @@ void startmpu(){
   /*When we start, the gyro might have an offset value. We make 520 readdings and get that calibration value
   We use taht later in the code to substract the raw offset. 
   for (int i = 0; i < 520; i++) {                               //Create 520 loops
-    if (i % 20 == 0){
-      digitalWrite(LED1, !digitalRead(LED1));                   //Blink the LED every 20 loops
-      digitalWrite(Buzzer, !digitalRead(Buzzer));               //Buzz every 20 loops
-    }
+    
     Wire.beginTransmission(MPU6050_ADDR);                       //Start i2c communication with MPU6050
     Wire.write(0x43);                                           //We read from register 0x43
     Wire.endTransmission();                                     //End the i2c transmission
@@ -124,12 +121,6 @@ void startmpu(){
   Gyro_X_Offset /= 520;                                         //Divide the total value by 520 to get the avarage gyro offset
   Gyro_Y_Offset /= 520;                                         //Divide the total value by 520 to get the avarage gyro offset
 
-  delay(200);                                                   //Small Delay
-  pinMode(Enable, OUTPUT);                                      //Set Enable pin as OUTPUT
-  digitalWrite(Enable, LOW);                                    //Finally, we enable the stepper drivers (drivers are enabled with LOW)
-
-  //Set the Loop_Time variable at the next end loop time
-  Loop_Time = micros() + 4000;                                 //Loop time is 4000us
 */
 
 }
@@ -178,12 +169,55 @@ void processGyroData() {
   rotZ = gyroZ / 131.0;
 }
 
+// Print out 3-axis gyroscope data and 3-axis accelerometer data
+// Get the values then offset them
+void printData() {
+  Serial.print("Gyro (deg)");
+  Serial.print(" X=");
+  Serial.print(rotX);
+  Serial.print(" Y=");
+  Serial.print(rotY);
+  Serial.print(" Z=");
+  Serial.print(rotZ);
+  Serial.print(" Accel (g)");
+  Serial.print(" X=");
+  Serial.print(gForceX);
+  Serial.print(" Y=");
+  Serial.print(gForceY);
+  Serial.print(" Z=");
+  Serial.println(gForceZ);
+   // I2C to get MPU6050 six-axis data  ax ay az gx gy gz
+  mpu6050.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+ 
+  // Radial rotation angle calculation formula; 
+  // The negative sign indicates the direction.
+  // Convert radians to degrees.
+  Angle = -atan2(ay , az) * (180/ PI);     
+ 
+  // The x-axis angular velocity calculated by the gyroscope; 
+  // The negative sign indicates the direction. The 131 value comes
+  // from the MPU6050 datasheet.
+  Gyro_x = -gx / 131;  
+ 
+  // Print the tilt angle in degrees
+  Serial.print("Angle = ");
+  Serial.print(Angle);
+ 
+  // Print the angular velocity in degrees per second
+  Serial.print("   Gyro_x = ");
+  Serial.println(Gyro_x);
+}
+
 /*
 
 */
 
+
+// Calculating angle
+
 void setup()
 {
+  mpu.initialize();
   
   // Setup Serial Monitor
   Serial.begin(9600); 
@@ -207,6 +241,7 @@ void setup()
 
 void loop()
 {
+  printData();
     
     // Write PWM to controller
     analogWrite(PWMA, motorPwm1);
@@ -258,26 +293,73 @@ void loop()
     encoderValue2 = 0;
   }
   
-  Vector rawAccel = mpu.readRawAccel();
-  Vector normAccel = mpu.readNormalizeAccel();
-
-  Serial.print(" Xraw = ");
-  Serial.print(rawAccel.XAxis);
-  Serial.print(" Yraw = ");
-  Serial.print(rawAccel.YAxis);
-  Serial.print(" Zraw = ");
-
-  Serial.println(rawAccel.ZAxis);
-  Serial.print(" Xnorm = ");
-  Serial.print(normAccel.XAxis);
-  Serial.print(" Ynorm = ");
-  Serial.print(normAccel.YAxis);
-  Serial.print(" Znorm = ");
-  Serial.println(normAccel.ZAxis);
   
-  delay(1000);
 
 
+}
+
+/////////////////////////////angle calculate///////////////////////
+void angle_calculate(int16_t ax,int16_t ay,int16_t az,int16_t gx,int16_t gy,int16_t gz,float dt,float Q_angle,float Q_gyro,float R_angle,float C_0,float K1)
+{
+  // Radial rotation angle calculation formula; negative sign is direction processing
+  Angle = -atan2(ay , az) * (180/ PI); 
+ 
+  // The X-axis angular velocity calculated by the gyroscope; the negative sign is the direction processing
+  Gyro_x = -gx / 131;      
+ 
+  // KalmanFilter 
+  Kalman_Filter(Angle, Gyro_x);            
+}
+////////////////////////////////////////////////////////////////
+ 
+///////////////////////////////KalmanFilter/////////////////////
+void Kalman_Filter(double angle_m, double gyro_m)
+{
+  // Prior estimate
+  angle += (gyro_m - q_bias) * dt;          
+  angle_err = angle_m - angle;
+ 
+  // Differential of azimuth error covariance
+  Pdot[0] = Q_angle - P[0][1] - P[1][0];    
+  Pdot[1] = - P[1][1];
+  Pdot[2] = - P[1][1];
+  Pdot[3] = Q_gyro;
+ 
+  // The integral of the covariance differential of the prior estimate error
+  P[0][0] += Pdot[0] * dt;    
+  P[0][1] += Pdot[1] * dt;
+  P[1][0] += Pdot[2] * dt;
+  P[1][1] += Pdot[3] * dt;
+   
+  // Intermediate variable of matrix multiplication
+  PCt_0 = C_0 * P[0][0];
+  PCt_1 = C_0 * P[1][0];
+   
+  // Denominator
+  E = R_angle + C_0 * PCt_0;
+   
+  // Gain value
+  K_0 = PCt_0 / E;
+  K_1 = PCt_1 / E;
+ 
+  // Intermediate variable of matrix multiplication
+  t_0 = PCt_0;  
+  t_1 = C_0 * P[0][1];
+ 
+  // Posterior estimation error covariance
+  P[0][0] -= K_0 * t_0;     
+  P[0][1] -= K_0 * t_1;
+  P[1][0] -= K_1 * t_0;
+  P[1][1] -= K_1 * t_1;
+ 
+  // Posterior estimation
+  q_bias += K_1 * angle_err;    
+ 
+  // The differential value of the output value; work out the optimal angular velocity
+  angle_speed = gyro_m - q_bias;   
+ 
+  ////Posterior estimation; work out the optimal angle
+  angle += K_0 * angle_err; 
 }
 
 void updateEncoder1()
