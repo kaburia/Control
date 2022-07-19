@@ -358,6 +358,7 @@ void loop()
   printData();
   recordAccelRegisters();
   recordGyroRegisters();
+  anglePWM();
     
     // Write PWM to controller
     analogWrite(PWMA, motorPwm1);
