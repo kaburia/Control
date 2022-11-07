@@ -30,4 +30,10 @@
 - 
 
 ### Implementing Balance by using MPU-6050 data against recorded rpm via the encoder
-The Inertial Measurement Unit Sensor provides  time serries data
+The Inertial Measurement Unit Sensor provides  time serries data<br>
+Is it possible to achieve balance with just the two variables
+1. ax,ay
+2. gx, gy
+3. rpm
+4. Constants being the weight 
+5. How would addition to weight affect the motion?
