@@ -30,3 +30,4 @@
 - 
 
 ### Implementing Balance by using MPU-6050 data against recorded rpm via the encoder
+The Inertial Measurement Unit Sensor provides  time serries data
